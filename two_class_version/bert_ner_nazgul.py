@@ -2,10 +2,10 @@ import logging
 from nauron import Response, Nazgul, MQConsumer
 from transformers import BertTokenizer, BertForTokenClassification
 import torch
-import stanza
 import pika, json
 from typing import Dict, Any
 from collections import Counter
+import ast
 
 logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(name)s : %(message)s")
 logging.getLogger("pika").setLevel(level=logging.WARNING)
@@ -14,23 +14,15 @@ logger = logging.getLogger('mynazgul')
 
 
 class BertNerNazgul(Nazgul):
-    def __init__(self, stanza_location: str = 'stanza_model', bert_location: str = 'ner_bert'):
-        self.tokenizer = stanza.Pipeline(lang='et', dir=stanza_location, processors='tokenize', logging_level='WARN')
+    def __init__(self, bert_location='ner_bert'):
+        logger.info("Loading BERT NER model...")
         self.bertner = BertForTokenClassification.from_pretrained(bert_location, return_dict=True)
         self.labelmap = {0: 'B-LOC', 1: 'B-ORG', 2: 'B-PER', 3: 'I-LOC', 4: 'I-ORG', 5: 'I-PER', 6: 'O'}
-        self.bert_tokenizer = BertTokenizer.from_pretrained(bert_location)
+        self.tokenizer = BertTokenizer.from_pretrained(bert_location)
 
     def process_request(self, request: Dict[str, Any]) -> Response:
         try:
-            doc = self.tokenizer(request["text"])
-            extracted_data = doc.to_dict()
-            sentences = []
-            for sentence in extracted_data:
-                sentence_collected = []
-                for word in sentence:
-                    text = word.get('text')
-                    sentence_collected.append(text)
-                sentences.append(sentence_collected)
+            sentences = ast.literal_eval(request['text'])
             tagged_sentences = []
             for sentence in sentences:
                 entities = self.predict(sentence)
@@ -39,16 +31,16 @@ class BertNerNazgul(Nazgul):
                     subresult = {'word': word, 'ner': entity}
                     words.append(subresult)
                 tagged_sentences.append(words)
-            return Response({"result":tagged_sentences}, mimetype="application/json")
+            return Response({'result':tagged_sentences}, mimetype="application/json")
         except ValueError:
             return Response(http_status_code=413,
                             content='Input is too long.')
 
     def predict(self, sentence: list) -> list:
-        grouped_inputs = [torch.LongTensor([self.bert_tokenizer.cls_token_id])]
+        grouped_inputs = [torch.LongTensor([self.tokenizer.cls_token_id])]
         subtokens_per_token = []
         for token in sentence:
-            tokens = self.bert_tokenizer.encode(
+            tokens = self.tokenizer.encode(
                 token,
                 return_tensors="pt",
                 add_special_tokens=False,
@@ -56,7 +48,7 @@ class BertNerNazgul(Nazgul):
             grouped_inputs.append(tokens)
             subtokens_per_token.append(len(tokens))
 
-        grouped_inputs.append(torch.LongTensor([self.bert_tokenizer.sep_token_id]))
+        grouped_inputs.append(torch.LongTensor([self.tokenizer.sep_token_id]))
 
         flattened_inputs = torch.cat(grouped_inputs)
         flattened_inputs = torch.unsqueeze(flattened_inputs, 0)
