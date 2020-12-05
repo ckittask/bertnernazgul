@@ -63,8 +63,13 @@ class BertNerNazgul(Nazgul):
             aligned_predictions.append(group)
             ptr += size
         predicted_labels = []
+        previous = 'O'
         for token, prediction_group in zip(sentence, aligned_predictions):
             label = Counter(prediction_group).most_common(1)[0][0]
+            base = label.split('-')[-1]
+            if previous == 'O' and label.startswith('I'):
+                label = 'B-' + base
+            previous = label
             predicted_labels.append(label)
         return predicted_labels
 
